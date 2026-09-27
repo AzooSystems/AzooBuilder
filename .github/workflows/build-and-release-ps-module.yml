@@ -22,17 +22,18 @@ on:
         description: Publish the module to the caller-configured GitHub Packages NuGet feed
         required: true
         type: boolean
+        default: false
       gitHubPackagesNuGetFeedOrganizationName:
         description: Organization name used as the credential username for the GitHub Packages NuGet feed
         required: false
         type: string
       gitHubPackagesNuGetFeedRepositoryName:
         description: Local PSResource repository name assigned to the caller's GitHub Packages NuGet feed
-        required: true
+        required: false
         type: string
       gitHubPackagesNuGetFeedUri:
         description: NuGet endpoint URI of the caller's GitHub Packages feed
-        required: true
+        required: false
         type: string
 
       # GitHub Container Registry configuration
@@ -40,6 +41,7 @@ on:
         description: Publish the module package as an OCI artifact to GitHub Container Registry
         required: true
         type: boolean
+        default: false
       gitHubContainerRegistryOrganizationName:
         description: GHCR organization name; defaults to the repository owner
         required: false
@@ -54,16 +56,19 @@ on:
         description: Publish the package to PowerShell Gallery
         required: true
         type: boolean
+        default: false
       psGalleryRepositoryName:
         description: Registered PSResource repository name for PowerShell Gallery
-        required: true
+        required: false
         type: string
+        default: PSGallery
 
       # GitHub Release configuration
       publishToGitHubRelease:
         description: Create or update the GitHub Release for v{version} and upload the module package
         required: true
         type: boolean
+        default: false
 
       # attestation generation overrides
       generateAttestation:
