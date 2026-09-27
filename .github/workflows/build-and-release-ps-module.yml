@@ -215,7 +215,10 @@ jobs:
           IS_PRERELEASE: ${{ steps.build.outputs.isPrerelease }}
         run: |
           $tag = "v$env:RELEASE_VERSION"
-          gh release view $tag --repo $env:REPOSITORY *> $null
+          $isDraft = gh release view $tag `
+            --repo $env:REPOSITORY `
+            --json isDraft `
+            --jq .isDraft 2> $null
 
           if ($LASTEXITCODE -ne 0) {
               $arguments = @(
@@ -223,6 +226,7 @@ jobs:
                   "--repo", $env:REPOSITORY,
                   "--verify-tag",
                   "--generate-notes",
+                  "--draft",
                   "--title", $tag
               )
 
@@ -232,8 +236,11 @@ jobs:
 
               & gh @arguments
               if ($LASTEXITCODE -ne 0) {
-                  throw "Failed to create GitHub Release $tag."
+                  throw "Failed to create draft GitHub Release $tag."
               }
+          }
+          elseif ($isDraft -ne "true") {
+              throw "GitHub Release $tag already exists and is not a draft. Assets cannot be changed when immutable releases are enabled."
           }
 
           gh release upload $tag $env:PACKAGE_PATH `
@@ -242,6 +249,14 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to upload $env:PACKAGE_PATH to GitHub Release $tag."
+          }
+
+          gh release edit $tag `
+            --repo $env:REPOSITORY `
+            --draft=false
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Uploaded $env:PACKAGE_PATH, but failed to publish draft GitHub Release $tag."
           }
 
       - name: Setup GitHub Packages repository
