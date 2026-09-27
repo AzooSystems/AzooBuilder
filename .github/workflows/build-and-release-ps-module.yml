@@ -35,6 +35,20 @@ on:
         required: true
         type: string
 
+      # GitHub Container Registry configuration
+      publishToGitHubContainerRegistry:
+        description: Publish the module package as an OCI artifact to GitHub Container Registry
+        required: true
+        type: boolean
+      gitHubContainerRegistryOrganizationName:
+        description: GHCR organization name; defaults to the repository owner
+        required: false
+        type: string
+      gitHubContainerRegistryPackageName:
+        description: GHCR package name; defaults to the PowerShell module name
+        required: false
+        type: string
+
       # PowerShell Gallery feed configuration
       publishToPowerShellGallery:
         description: Publish the package to PowerShell Gallery
@@ -67,6 +81,9 @@ on:
         required: false
       gitHubReleaseToken:
         description: Token used to create or update the GitHub Release
+        required: false
+      gitHubContainerRegistryToken:
+        description: Token with packages write permission used to publish to GHCR
         required: false
 
 jobs:
@@ -106,6 +123,16 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:GALLERY_API_KEY)) {
               throw "The galleryApiKey secret is required when publishToPowerShellGallery is enabled."
+          }
+
+      - name: Validate GitHub Container Registry secret
+        if: inputs.publishToGitHubContainerRegistry == true
+        shell: pwsh
+        env:
+          GHCR_TOKEN: ${{ secrets.gitHubContainerRegistryToken }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GHCR_TOKEN)) {
+              throw "The gitHubContainerRegistryToken secret is required when publishToGitHubContainerRegistry is enabled."
           }
 
       - name: Validate GitHub Release secret
@@ -250,10 +277,73 @@ jobs:
             -Credential $credential `
             -SkipDependenciesCheck
 
-      # TODO: release into GitHub container registry feed when there is proper support
-      # * GitHub NuGet feed requires an authentication token even when set to public
-      # * PSResourceGet's container registry support is Azure Container Registry
+      # PSResourceGet's container registry support is limited to Azure Container Registry,
+      # so GHCR publication uses ORAS directly.
+      - name: Setup ORAS
+        if: inputs.publishToGitHubContainerRegistry == true
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        with:
+          version: 1.3.0
 
+      - name: Publish package to GitHub Container Registry
+        if: inputs.publishToGitHubContainerRegistry == true
+        shell: pwsh
+        env:
+          GHCR_TOKEN: ${{ secrets.gitHubContainerRegistryToken }}
+          GHCR_ORGANIZATION: ${{ inputs.gitHubContainerRegistryOrganizationName }}
+          GHCR_PACKAGE_NAME: ${{ inputs.gitHubContainerRegistryPackageName }}
+          DEFAULT_ORGANIZATION: ${{ github.repository_owner }}
+          DEFAULT_PACKAGE_NAME: ${{ inputs.moduleName }}
+          PACKAGE_PATH: ${{ steps.package.outputs.packagePath }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          GITHUB_ACTOR_NAME: ${{ github.actor }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          $organization = if ([string]::IsNullOrWhiteSpace($env:GHCR_ORGANIZATION)) {
+              $env:DEFAULT_ORGANIZATION
+          }
+          else {
+              $env:GHCR_ORGANIZATION
+          }
+
+          $packageName = if ([string]::IsNullOrWhiteSpace($env:GHCR_PACKAGE_NAME)) {
+              $env:DEFAULT_PACKAGE_NAME
+          }
+          else {
+              $env:GHCR_PACKAGE_NAME
+          }
+
+          $organization = $organization.ToLowerInvariant()
+          $packageName = $packageName.ToLowerInvariant()
+          $tag = $env:RELEASE_VERSION.Replace("+", "_")
+          $reference = "ghcr.io/$organization/${packageName}:$tag"
+
+          $env:GHCR_TOKEN | oras login ghcr.io `
+            --username $env:GITHUB_ACTOR_NAME `
+            --password-stdin
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to authenticate with GitHub Container Registry."
+          }
+
+          try {
+              oras push $reference `
+                --artifact-type "application/vnd.microsoft.powershell.module" `
+                --annotation "org.opencontainers.image.title=$packageName" `
+                --annotation "org.opencontainers.image.version=$env:RELEASE_VERSION" `
+                --annotation "org.opencontainers.image.source=$env:SOURCE_URL" `
+                "${env:PACKAGE_PATH}:application/vnd.microsoft.powershell.module.nupkg"
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to publish $env:PACKAGE_PATH to $reference."
+              }
+          }
+          finally {
+              oras logout ghcr.io
+          }
+
+
+      # GitHub NuGet feed requires an authentication token even when set to public
       - name: Publish to PowerShell Gallery
         if: inputs.publishToPowerShellGallery == true
         shell: pwsh
