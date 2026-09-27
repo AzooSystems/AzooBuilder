@@ -1,0 +1,269 @@
+name: build-and-release-ps-module
+
+on:
+  workflow_call:
+    inputs:
+      # inputs
+      version:
+        description: Semantic version without a leading v. PowerGallaery adds some limitations for version scheme.
+        required: true
+        type: string
+      moduleName:
+        description: PowerShell module name
+        required: true
+        type: string
+      modulePath:
+        description: Path to the module source directory
+        required: true
+        type: string
+
+      # GitHub Packages NuGet feed configuration supplied by the caller
+      publishToGitHubPackagesNuGetFeed:
+        description: Publish the module to the caller-configured GitHub Packages NuGet feed
+        required: true
+        type: boolean
+      gitHubPackagesNuGetFeedOrganizationName:
+        description: Organization name used as the credential username for the GitHub Packages NuGet feed
+        required: false
+        type: string
+      gitHubPackagesNuGetFeedRepositoryName:
+        description: Local PSResource repository name assigned to the caller's GitHub Packages NuGet feed
+        required: true
+        type: string
+      gitHubPackagesNuGetFeedUri:
+        description: NuGet endpoint URI of the caller's GitHub Packages feed
+        required: true
+        type: string
+
+      # PowerShell Gallery feed configuration
+      publishToPowerShellGallery:
+        description: Publish the package to PowerShell Gallery
+        required: true
+        type: boolean
+      psGalleryRepositoryName:
+        description: Registered PSResource repository name for PowerShell Gallery
+        required: true
+        type: string
+
+      # GitHub Release configuration
+      publishToGitHubRelease:
+        description: Create or update the GitHub Release for v{version} and upload the module package
+        required: true
+        type: boolean
+
+      # attestation generation overrides
+      generateAttestation:
+        description: Override attestation generation with true or false; auto generates stable attestations only
+        required: false
+        type: string
+        default: auto
+
+    secrets:
+      githubToken:
+        description: Token used to publish to GitHub Packages(nuget feed)
+        required: false
+      galleryApiKey:
+        description: API key used to publish to PowerShell Gallery
+        required: false
+      gitHubReleaseToken:
+        description: Token used to create or update the GitHub Release
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate attestation option
+        shell: pwsh
+        env:
+          GENERATE_ATTESTATION: ${{ inputs.generateAttestation }}
+        run: |
+          if ($env:GENERATE_ATTESTATION -notin @("auto", "true", "false")) {
+              throw "generateAttestation must be auto, true, or false."
+          }
+
+      - name: Validate GitHub Packages configuration
+        if: inputs.publishToGitHubPackagesNuGetFeed == true
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.githubToken }}
+          ORGANIZATION_NAME: ${{ inputs.gitHubPackagesNuGetFeedOrganizationName }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+              throw "The githubToken secret is required when publishToGitHubPackagesNuGetFeed is enabled."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:ORGANIZATION_NAME)) {
+              throw "The gitHubPackagesNuGetFeedOrganizationName input is required when publishToGitHubPackagesNuGetFeed is enabled."
+          }
+
+      - name: Validate PowerShell Gallery secret
+        if: inputs.publishToPowerShellGallery == true
+        shell: pwsh
+        env:
+          GALLERY_API_KEY: ${{ secrets.galleryApiKey }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GALLERY_API_KEY)) {
+              throw "The galleryApiKey secret is required when publishToPowerShellGallery is enabled."
+          }
+
+      - name: Validate GitHub Release secret
+        if: inputs.publishToGitHubRelease == true
+        shell: pwsh
+        env:
+          GITHUB_RELEASE_TOKEN: ${{ secrets.gitHubReleaseToken }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_RELEASE_TOKEN)) {
+              throw "The gitHubReleaseToken secret is required when publishToGitHubRelease is enabled."
+          }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build module artifact (staging)
+        id: build
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          MODULE_NAME: ${{ inputs.moduleName }}
+          MODULE_PATH: ${{ inputs.modulePath }}
+        run: |
+          try {
+              $semver = [System.Management.Automation.SemanticVersion]::Parse($env:RELEASE_VERSION)
+          }
+          catch {
+              throw "Invalid SemVer version: $env:RELEASE_VERSION"
+          }
+
+          $moduleVersion = "$($semver.Major).$($semver.Minor).$($semver.Patch)"
+          $isPrerelease = -not [string]::IsNullOrWhiteSpace($semver.PreReleaseLabel)
+
+          "isPrerelease=$isPrerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          $stagingPath = Join-Path "./dist" $env:MODULE_NAME
+          Remove-Item "./dist" -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
+          Copy-Item (Join-Path $env:MODULE_PATH "*") $stagingPath -Recurse
+
+          $manifestPath = Join-Path $stagingPath "$($env:MODULE_NAME).psd1"
+          $params = @{
+              Path          = $manifestPath
+              ModuleVersion = $moduleVersion
+          }
+
+          if ($isPrerelease) {
+              $params.Prerelease = $semver.PreReleaseLabel
+          }
+
+          Update-PsModuleManifest @params
+
+      - name: Package module (.nupkg)
+        id: package
+        shell: pwsh
+        env:
+          MODULE_NAME: ${{ inputs.moduleName }}
+        run: |
+          New-Item -ItemType Directory -Path "./artifacts" -Force | Out-Null
+          $packagePath = Compress-PSResource -PassThru `
+            -Path (Join-Path "./dist" $env:MODULE_NAME) `
+            -DestinationPath "./artifacts"
+
+          "packagePath=$packagePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Generate artifact attestation
+        if: inputs.generateAttestation == 'true' || (inputs.generateAttestation == 'auto' && steps.build.outputs.isPrerelease == 'False')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.packagePath }}
+
+      - name: Publish package to GitHub Release
+        if: inputs.publishToGitHubRelease == true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.gitHubReleaseToken }}
+          PACKAGE_PATH: ${{ steps.package.outputs.packagePath }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          IS_PRERELEASE: ${{ steps.build.outputs.isPrerelease }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          gh release view $tag --repo $env:REPOSITORY *> $null
+
+          if ($LASTEXITCODE -ne 0) {
+              $arguments = @(
+                  "release", "create", $tag,
+                  "--repo", $env:REPOSITORY,
+                  "--verify-tag",
+                  "--generate-notes",
+                  "--title", $tag
+              )
+
+              if ($env:IS_PRERELEASE -eq "True") {
+                  $arguments += "--prerelease"
+              }
+
+              & gh @arguments
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to create GitHub Release $tag."
+              }
+          }
+
+          gh release upload $tag $env:PACKAGE_PATH `
+            --repo $env:REPOSITORY `
+            --clobber
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to upload $env:PACKAGE_PATH to GitHub Release $tag."
+          }
+
+      - name: Setup GitHub Packages repository
+        if: inputs.publishToGitHubPackagesNuGetFeed == true
+        shell: pwsh
+        env:
+          REPOSITORY_NAME: ${{ inputs.gitHubPackagesNuGetFeedRepositoryName }}
+          REPOSITORY_URI: ${{ inputs.gitHubPackagesNuGetFeedUri }}
+        run: |
+          Register-PSResourceRepository `
+            -Name $env:REPOSITORY_NAME `
+            -Uri $env:REPOSITORY_URI `
+            -Trusted
+
+      - name: Publish to GitHub Packages
+        if: inputs.publishToGitHubPackagesNuGetFeed == true
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.githubToken }}
+          ORGANIZATION_NAME: ${{ inputs.gitHubPackagesNuGetFeedOrganizationName }}
+          PACKAGE_PATH: ${{ steps.package.outputs.packagePath }}
+          REPOSITORY_NAME: ${{ inputs.gitHubPackagesNuGetFeedRepositoryName }}
+        run: |
+          $secureToken = ConvertTo-SecureString $env:GITHUB_TOKEN -AsPlainText -Force
+          $credential = [System.Management.Automation.PSCredential]::new(
+            $env:ORGANIZATION_NAME,
+            $secureToken
+          )
+
+          Publish-PSResource `
+            -NupkgPath $env:PACKAGE_PATH `
+            -Repository $env:REPOSITORY_NAME `
+            -Credential $credential `
+            -SkipDependenciesCheck
+
+      # TODO: release into GitHub container registry feed when there is proper support
+      # * GitHub NuGet feed requires an authentication token even when set to public
+      # * PSResourceGet's container registry support is Azure Container Registry
+
+      - name: Publish to PowerShell Gallery
+        if: inputs.publishToPowerShellGallery == true
+        shell: pwsh
+        env:
+          GALLERY_API_KEY: ${{ secrets.galleryApiKey }}
+          PACKAGE_PATH: ${{ steps.package.outputs.packagePath }}
+          REPOSITORY_NAME: ${{ inputs.psGalleryRepositoryName }}
+        run: |
+          Publish-PSResource `
+            -NupkgPath $env:PACKAGE_PATH `
+            -Repository $env:REPOSITORY_NAME `
+            -ApiKey $env:GALLERY_API_KEY `
+            -SkipDependenciesCheck
