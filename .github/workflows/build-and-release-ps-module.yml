@@ -317,6 +317,10 @@ jobs:
           $packageName = $packageName.ToLowerInvariant()
           $tag = $env:RELEASE_VERSION.Replace("+", "_")
           $reference = "ghcr.io/$organization/${packageName}:$tag"
+            $relativePackagePath = [System.IO.Path]::GetRelativePath(
+              (Get-Location).Path,
+              $env:PACKAGE_PATH
+            )
 
           $env:GHCR_TOKEN | oras login ghcr.io `
             --username $env:GITHUB_ACTOR_NAME `
@@ -332,7 +336,7 @@ jobs:
                 --annotation "org.opencontainers.image.title=$packageName" `
                 --annotation "org.opencontainers.image.version=$env:RELEASE_VERSION" `
                 --annotation "org.opencontainers.image.source=$env:SOURCE_URL" `
-                "${env:PACKAGE_PATH}:application/vnd.microsoft.powershell.module.nupkg"
+                "${relativePackagePath}:application/vnd.microsoft.powershell.module.nupkg"
 
               if ($LASTEXITCODE -ne 0) {
                   throw "Failed to publish $env:PACKAGE_PATH to $reference."
