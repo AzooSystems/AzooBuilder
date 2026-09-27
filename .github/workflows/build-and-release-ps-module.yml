@@ -78,7 +78,7 @@ on:
         default: auto
 
     secrets:
-      githubToken:
+      gitHubPackagesNuGetFeedToken:
         description: Token used to publish to GitHub Packages(nuget feed)
         required: false
       galleryApiKey:
@@ -109,11 +109,11 @@ jobs:
         if: inputs.publishToGitHubPackagesNuGetFeed == true
         shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.githubToken }}
+          GITHUB_TOKEN: ${{ secrets.gitHubPackagesNuGetFeedToken }}
           ORGANIZATION_NAME: ${{ inputs.gitHubPackagesNuGetFeedOrganizationName }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
-              throw "The githubToken secret is required when publishToGitHubPackagesNuGetFeed is enabled."
+              throw "The gitHubPackagesNuGetFeedToken secret is required when publishToGitHubPackagesNuGetFeed is enabled."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:ORGANIZATION_NAME)) {
@@ -280,7 +280,7 @@ jobs:
         if: inputs.publishToGitHubPackagesNuGetFeed == true
         shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.githubToken }}
+          GITHUB_TOKEN: ${{ secrets.gitHubPackagesNuGetFeedToken }}
           ORGANIZATION_NAME: ${{ inputs.gitHubPackagesNuGetFeedOrganizationName }}
           PACKAGE_PATH: ${{ steps.package.outputs.packagePath }}
           REPOSITORY_NAME: ${{ inputs.gitHubPackagesNuGetFeedRepositoryName }}

@@ -36,8 +36,8 @@ ghcr.io/tmknom/actdocs inject --sort --file README.md .github/workflows/build-an
 | :--- | :---------- | :------: |
 | galleryApiKey | API key used to publish to PowerShell Gallery | no |
 | gitHubContainerRegistryToken | Token with packages write permission used to publish to GHCR | no |
+| gitHubPackagesNuGetFeedToken | Token used to publish to GitHub Packages(nuget feed) | no |
 | gitHubReleaseToken | Token used to create or update the GitHub Release | no |
-| githubToken | Token used to publish to GitHub Packages(nuget feed) | no |
 
 ## Outputs
 
