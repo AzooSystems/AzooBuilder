@@ -303,6 +303,7 @@ jobs:
         if: inputs.publishToGitHubContainerRegistry == true
         uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
         with:
+          # renovate: datasource=github-releases depName=oras-project/oras versioning=semver
           version: 1.3.0
 
       - name: Publish package to GitHub Container Registry
