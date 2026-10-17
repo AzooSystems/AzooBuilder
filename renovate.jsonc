@@ -5,6 +5,12 @@
     "helpers:pinGitHubActionDigests"
   ],
   "customManagers": [
+    /*
+      * Oras-project/setup-oras actions hosts copy of versioned URLs and checksums
+      * As long as pinned version of the action is used the CLI is effectily pinned
+      * Note: the pinned version of Oras-project/setup-oras limits the supported version input
+        * Renovatebot might suggest updates that are not compatible with the pinned version of the action
+    */
     {
       "customType": "regex",
       "description": "Track the ORAS CLI version used by oras-project/setup-oras",
